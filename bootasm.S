@@ -2,87 +2,87 @@
 #include "memlayout.h"
 #include "mmu.h"
 
-# Start the first CPU: switch to 32-bit protected mode, jump into C.
-# The BIOS loads this code from the first sector of the hard disk into
-# memory at physical address 0x7c00 and starts executing in real mode
-# with %cs=0 %ip=7c00.
+# bootasm.S：引导阶段（bootloader）第一段代码
+# BIOS 会把磁盘第 1 个扇区（512B）加载到物理地址 0x7c00，
+# 并在 16-bit real mode 下从这里开始执行（%cs:%ip = 0000:7c00）
 
-.code16                       # Assemble for 16-bit mode
+.code16                 # 生成 16-bit 机器码（real mode）
 .globl start
 start:
-  cli                         # BIOS enabled interrupts; disable
+  cli                   # 关闭中断：BIOS 默认开中断，启动阶段避免被打断
 
-  # Zero data segment registers DS, ES, and SS.
-  xorw    %ax,%ax             # Set %ax to zero
-  movw    %ax,%ds             # -> Data Segment
-  movw    %ax,%es             # -> Extra Segment
-  movw    %ax,%ss             # -> Stack Segment
+  # 将段寄存器清零：使 DS/ES/SS 指向 0 段（实模式下靠段:偏移寻址）
+  xorw    %ax, %ax      # %ax = 0
+  movw    %ax, %ds      # DS = 0（data segment）
+  movw    %ax, %es      # ES = 0（extra segment）
+  movw    %ax, %ss      # SS = 0（stack segment）
 
-  # Physical address line A20 is tied to zero so that the first PCs 
-  # with 2 MB would run software that assumed 1 MB.  Undo that.
+  # 开启 A20：早期 PC 会让地址线 A20 关闭，导致超过 1MB 会回绕。
+  # 为了能访问 1MB 以上内存，需要打开 A20。
 seta20.1:
-  inb     $0x64,%al               # Wait for not busy
-  testb   $0x2,%al
-  jnz     seta20.1
+  inb     $0x64, %al    # 读键盘控制器状态端口 0x64
+  testb   $0x2, %al     # 检查 busy 位（输入缓冲满）
+  jnz     seta20.1      # busy 就等待
 
-  movb    $0xd1,%al               # 0xd1 -> port 0x64
-  outb    %al,$0x64
+  movb    $0xd1, %al    # 命令：写输出端口
+  outb    %al, $0x64
 
 seta20.2:
-  inb     $0x64,%al               # Wait for not busy
-  testb   $0x2,%al
+  inb     $0x64, %al
+  testb   $0x2, %al
   jnz     seta20.2
 
-  movb    $0xdf,%al               # 0xdf -> port 0x60
-  outb    %al,$0x60
+  movb    $0xdf, %al    # 0xdf：设置 A20 使能
+  outb    %al, $0x60    # 写到端口 0x60（键盘控制器数据端口）
 
-  # Switch from real to protected mode.  Use a bootstrap GDT that makes
-  # virtual addresses map directly to physical addresses so that the
-  # effective memory map doesn't change during the transition.
-  lgdt    gdtdesc
+  # 从 real mode 切到 32-bit protected mode
+  # 使用一个“临时 GDT”，让线性地址=物理地址（identity mapping），
+  # 这样切换时内存映射不会突然改变。
+  lgdt    gdtdesc       # 加载 GDT 描述符（界限+基址）
   movl    %cr0, %eax
-  orl     $CR0_PE, %eax
+  orl     $CR0_PE, %eax # CR0.PE=1：开启保护模式
   movl    %eax, %cr0
 
-//PAGEBREAK!
-  # Complete the transition to 32-bit protected mode by using a long jmp
-  # to reload %cs and %eip.  The segment descriptors are set up with no
-  # translation, so that the mapping is still the identity mapping.
+  # 关键：用 long jump 刷新流水线，并加载新的 CS 选择子，
+  # 正式进入 32-bit 代码段执行。
   ljmp    $(SEG_KCODE<<3), $start32
 
-.code32  # Tell assembler to generate 32-bit code now.
+.code32                  # 从这里开始生成 32-bit 机器码（protected mode）
 start32:
-  # Set up the protected-mode data segment registers
-  movw    $(SEG_KDATA<<3), %ax    # Our data segment selector
-  movw    %ax, %ds                # -> DS: Data Segment
-  movw    %ax, %es                # -> ES: Extra Segment
-  movw    %ax, %ss                # -> SS: Stack Segment
-  movw    $0, %ax                 # Zero segments not ready for use
-  movw    %ax, %fs                # -> FS
-  movw    %ax, %gs                # -> GS
+  # 设置保护模式下的数据段寄存器（使用平坦段：base=0, limit=4GB）
+  movw    $(SEG_KDATA<<3), %ax
+  movw    %ax, %ds
+  movw    %ax, %es
+  movw    %ax, %ss
 
-  # Set up the stack pointer and call into C.
-  movl    $start, %esp
+  # FS/GS 先清零：暂时不用
+  movw    $0, %ax
+  movw    %ax, %fs
+  movw    %ax, %gs
+
+  # 建立临时栈，并进入 C 代码 bootmain()
+  # bootmain 负责从磁盘读取内核 ELF，并跳转到内核入口 entry.S
+  movl    $start, %esp   # 临时栈顶（xv6 这样写是简化做法）
   call    bootmain
 
-  # If bootmain returns (it shouldn't), trigger a Bochs
-  # breakpoint if running under Bochs, then loop.
-  movw    $0x8a00, %ax            # 0x8a00 -> port 0x8a00
+  # 正常情况下 bootmain 不会返回。
+  # 如果返回：输出到 Bochs 端口触发断点，然后死循环。
+  movw    $0x8a00, %ax
   movw    %ax, %dx
   outw    %ax, %dx
-  movw    $0x8ae0, %ax            # 0x8ae0 -> port 0x8a00
+  movw    $0x8ae0, %ax
   outw    %ax, %dx
+
 spin:
   jmp     spin
 
-# Bootstrap GDT
-.p2align 2                                # force 4 byte alignment
+# Bootstrap GDT：三个段描述符
+.p2align 2
 gdt:
-  SEG_NULLASM                             # null seg
-  SEG_ASM(STA_X|STA_R, 0x0, 0xffffffff)   # code seg
-  SEG_ASM(STA_W, 0x0, 0xffffffff)         # data seg
+  SEG_NULLASM                           # 空段（必须有）
+  SEG_ASM(STA_X|STA_R, 0x0, 0xffffffff) # code seg：可执行/可读
+  SEG_ASM(STA_W, 0x0, 0xffffffff)       # data seg：可写
 
 gdtdesc:
-  .word   (gdtdesc - gdt - 1)             # sizeof(gdt) - 1
-  .long   gdt                             # address gdt
-
+  .word   (gdtdesc - gdt - 1)           # GDT 大小 - 1
+  .long   gdt                           # GDT 的线性地址
