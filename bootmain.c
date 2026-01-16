@@ -19,11 +19,16 @@
 
 // 从磁盘读取 count 字节数据到物理地址 pa，
 // offset 为内核文件中的字节偏移
+void vgaprint(void *dst, const char *s);
+
 void readseg(uchar*, uint, uint);
 
 void
 bootmain(void)
 {
+
+  vgaprint((void*)0xB8000, "[BOOT] enter bootmain");
+
   struct elfhdr *elf;     // ELF 文件头指针
   struct proghdr *ph;     // 程序段头指针
   struct proghdr *eph;    // 程序段头表结束位置
@@ -37,6 +42,8 @@ bootmain(void)
   // 从磁盘读取内核的前 4096 字节（至少包含 ELF header）
   // offset = 0 表示从内核文件起始处读
   readseg((uchar*)elf, 4096, 0);
+
+  vgaprint((void*)(0xB8000 + 160), "[BOOT] elf header loaded");
 
   // 检查 ELF 魔数，确认这是一个合法的 ELF 可执行文件
   if(elf->magic != ELF_MAGIC)
@@ -60,6 +67,9 @@ bootmain(void)
     if(ph->memsz > ph->filesz)
       stosb(pa + ph->filesz, 0, ph->memsz - ph->filesz);
   }
+
+  vgaprint((void*)(0xB8000 + 320), "[BOOT] kernel loaded");
+
 
   // ELF header 中记录了内核入口地址（entry）
   // 将其转换为函数指针并跳转执行

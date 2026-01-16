@@ -77,6 +77,11 @@ entry:
   # 在分页开启、地址映射改变后可能不正确
   mov $main, %eax
   jmp *%eax
+  
+  # Task3: mark kernel entry
+  movl $0xB8000, %edi
+  movw $0x0745, (%edi)   # 'E'
+
 
 # --------------------------------
 # 为 boot CPU 分配内核栈空间

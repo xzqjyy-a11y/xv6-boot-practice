@@ -76,8 +76,9 @@ start32:
 spin:
   jmp     spin
 
+
 # Bootstrap GDT：三个段描述符
-.p2align 2
+.p2align 1
 gdt:
   SEG_NULLASM                           # 空段（必须有）
   SEG_ASM(STA_X|STA_R, 0x0, 0xffffffff) # code seg：可执行/可读
@@ -86,3 +87,28 @@ gdt:
 gdtdesc:
   .word   (gdtdesc - gdt - 1)           # GDT 大小 - 1
   .long   gdt                           # GDT 的线性地址
+
+
+# ------------------------------------------------------------
+# Task3 helper: vgaprint(void *dst, const char *s)
+# Minimal VGA output: write string to dst in VGA memory.
+# cdecl args: dst at 4(%esp), s at 8(%esp)
+# ------------------------------------------------------------
+.globl vgaprint
+vgaprint:
+  movl  4(%esp), %edi         # dst
+  movl  8(%esp), %esi         # s
+1:
+  lodsb
+  testb %al, %al
+  jz    2f
+  movb  $0x07, %ah
+  stosw
+  jmp   1b
+2:
+  ret
+
+
+
+
+
